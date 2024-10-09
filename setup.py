@@ -29,6 +29,7 @@ setup(
         "egl_probe>=1.0.1",
         "torch",
         "torchvision",
+        "diffusers==0.11.1",
     ],
     eager_resources=['*'],
     include_package_data=True,
