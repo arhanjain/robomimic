@@ -16,7 +16,9 @@ from torchvision import transforms
 from torchvision import models as vision_models
 
 import robomimic.utils.tensor_utils as TensorUtils
-
+# prevent circular import 
+import robomimic.utils.obs_utils as ObsUtils
+# import robomimic.models.obs_core as ObsCore
 
 CONV_ACTIVATIONS = {
     "relu": nn.ReLU,
@@ -540,6 +542,7 @@ class ResNet18Conv(ConvBase):
         """Pretty print network."""
         header = '{}'.format(str(self.__class__.__name__))
         return header + '(input_channel={}, input_coord_conv={})'.format(self._input_channel, self._input_coord_conv)
+ObsUtils.register_encoder_core(ResNet18Conv)
 
 
 class R3MConv(ConvBase):
