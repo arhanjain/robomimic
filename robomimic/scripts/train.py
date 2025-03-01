@@ -78,6 +78,7 @@ def train(config, device):
     shape_meta = FileUtils.get_shape_metadata_from_dataset(
         dataset_path=config.train.data,
         all_obs_keys=config.all_obs_keys,
+        action_key = config.train.action_key,
         verbose=True
     )
 
@@ -135,7 +136,7 @@ def train(config, device):
 
     # load training data
     trainset, validset = TrainUtils.load_data_for_training(
-        config, obs_keys=shape_meta["all_obs_keys"])
+        config, obs_keys=shape_meta["all_obs_keys"], action_key=shape_meta["action_key"])
     train_sampler = trainset.get_dataset_sampler()
     print("\n============= Training Dataset =============")
     print(trainset)
@@ -147,8 +148,11 @@ def train(config, device):
 
     # maybe retreve statistics for normalizing observations
     obs_normalization_stats = None
+    action_normalization_stats = None
     if config.train.hdf5_normalize_obs:
         obs_normalization_stats = trainset.get_obs_normalization_stats()
+    if config.train.hdf5_normalize_actions:
+        action_normalization_stats = trainset.get_action_normalization_stats()
 
     # initialize data loaders
     train_loader = DataLoader(
@@ -199,6 +203,7 @@ def train(config, device):
             epoch=epoch,
             num_steps=train_num_steps,
             obs_normalization_stats=obs_normalization_stats,
+            action_normalization_stats=action_normalization_stats,
         )
         model.on_epoch_end(epoch)
 
@@ -317,6 +322,7 @@ def train(config, device):
                 shape_meta=shape_meta,
                 ckpt_path=os.path.join(ckpt_dir, epoch_ckpt_name + ".pth"),
                 obs_normalization_stats=obs_normalization_stats,
+                action_normalization_stats=action_normalization_stats,
             )
 
         # Finally, log memory usage in MB

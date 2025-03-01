@@ -80,7 +80,7 @@ def get_exp_dir(config, auto_remove_exp_dir=False):
     return log_dir, output_dir, video_dir
 
 
-def load_data_for_training(config, obs_keys):
+def load_data_for_training(config, obs_keys, action_key):
     """
     Data loading at the start of an algorithm.
 
@@ -116,16 +116,16 @@ def load_data_for_training(config, obs_keys):
         )
         assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
             "validation demonstrations!"
-        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
-        valid_dataset = dataset_factory(config, obs_keys, filter_by_attribute=valid_filter_by_attribute)
+        train_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=train_filter_by_attribute)
+        valid_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=valid_filter_by_attribute)
     else:
-        train_dataset = dataset_factory(config, obs_keys, filter_by_attribute=train_filter_by_attribute)
+        train_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=train_filter_by_attribute)
         valid_dataset = None
 
     return train_dataset, valid_dataset
 
 
-def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=None):
+def dataset_factory(config, obs_keys, action_key, filter_by_attribute=None, dataset_path=None):
     """
     Create a SequenceDataset instance to pass to a torch DataLoader.
 
@@ -150,6 +150,7 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
     ds_kwargs = dict(
         hdf5_path=dataset_path,
         obs_keys=obs_keys,
+        action_key=action_key,
         dataset_keys=config.train.dataset_keys,
         load_next_obs=config.train.hdf5_load_next_obs, # whether to load next observations (s') from dataset
         frame_stack=config.train.frame_stack,
@@ -161,6 +162,7 @@ def dataset_factory(config, obs_keys, filter_by_attribute=None, dataset_path=Non
         hdf5_cache_mode=config.train.hdf5_cache_mode,
         hdf5_use_swmr=config.train.hdf5_use_swmr,
         hdf5_normalize_obs=config.train.hdf5_normalize_obs,
+        hdf5_normalize_actions=config.train.hdf5_normalize_actions,
         filter_by_attribute=filter_by_attribute
     )
     dataset = SequenceDataset(**ds_kwargs)
@@ -460,7 +462,8 @@ def should_save_from_rollout_logs(
     )
 
 
-def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization_stats=None):
+def save_model(model, config, env_meta, shape_meta, ckpt_path, 
+            obs_normalization_stats=None, action_normalization_stats=None):
     """
     Save model to a torch pth file.
 
@@ -493,11 +496,16 @@ def save_model(model, config, env_meta, shape_meta, ckpt_path, obs_normalization
         assert config.train.hdf5_normalize_obs
         obs_normalization_stats = deepcopy(obs_normalization_stats)
         params["obs_normalization_stats"] = TensorUtils.to_list(obs_normalization_stats)
+    if action_normalization_stats is not None:
+        assert config.train.hdf5_normalize_actions
+        action_normalization_stats = deepcopy(action_normalization_stats)
+        params["action_normalization_stats"] = TensorUtils.to_list(action_normalization_stats)
     torch.save(params, ckpt_path)
     print("save checkpoint to {}".format(ckpt_path))
 
 
-def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_normalization_stats=None):
+def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, 
+            obs_normalization_stats=None, action_normalization_stats=None):
     """
     Run an epoch of training or validation.
 
@@ -551,7 +559,11 @@ def run_epoch(model, data_loader, epoch, validate=False, num_steps=None, obs_nor
         # process batch for training
         t = time.time()
         input_batch = model.process_batch_for_training(batch)
-        input_batch = model.postprocess_batch_for_training(input_batch, obs_normalization_stats=obs_normalization_stats)
+        input_batch = model.postprocess_batch_for_training(
+                input_batch, 
+                obs_normalization_stats=obs_normalization_stats,
+                action_normalization_stats=action_normalization_stats,
+                )
         timing_stats["Process_Batch"].append(time.time() - t)
 
         # forward and backward pass

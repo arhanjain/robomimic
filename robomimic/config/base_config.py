@@ -9,7 +9,6 @@ from copy import deepcopy
 
 import robomimic
 from robomimic.config.config import Config
-
 # global dictionary for remembering name - class mappings
 REGISTERED_CONFIGS = {}
 
@@ -163,6 +162,9 @@ class BaseConfig(Config):
         # in utils/dataset.py for more information.
         self.train.hdf5_normalize_obs = False
 
+        # if true, normalize actions at train and test time, using the global mean and standard deviation of each action in each dimension, computed across the training set. See SequenceDataset.normalize_actions in utils/dataset.py for more information.
+        self.train.hdf5_normalize_actions = False
+
         # if provided, use the list of demo keys under the hdf5 group "mask/@hdf5_filter_key" for training, instead 
         # of the full dataset. This provides a convenient way to train on only a subset of the trajectories in a dataset.
         self.train.hdf5_filter_key = None
@@ -181,11 +183,14 @@ class BaseConfig(Config):
         # keys from hdf5 to load into each batch, besides "obs" and "next_obs". If algorithms
         # require additional keys from each trajectory in the hdf5, they should be specified here.
         self.train.dataset_keys = (
-            "actions", 
+            # "actions", 
             "rewards", 
             "dones",
         )
 
+        # specify action key: this must be specified!
+        self.train.action_key = None
+        
         # one of [None, "last"] - set to "last" to include goal observations in each batch
         self.train.goal_mode = None
 

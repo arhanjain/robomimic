@@ -3,6 +3,9 @@ This file contains Dataset classes that are used by torch dataloaders
 to fetch batches from hdf5 files.
 """
 import os
+# from typing import assert_type
+from typing_extensions import assert_type
+
 import h5py
 import numpy as np
 from copy import deepcopy
@@ -20,6 +23,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         self,
         hdf5_path,
         obs_keys,
+        action_key,
         dataset_keys,
         frame_stack=1,
         seq_length=1,
@@ -30,6 +34,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         hdf5_cache_mode=None,
         hdf5_use_swmr=True,
         hdf5_normalize_obs=False,
+        hdf5_normalize_actions=False,
         filter_by_attribute=None,
         load_next_obs=True,
     ):
@@ -85,6 +90,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         self.hdf5_path = os.path.expanduser(hdf5_path)
         self.hdf5_use_swmr = hdf5_use_swmr
         self.hdf5_normalize_obs = hdf5_normalize_obs
+        self.hdf5_normalize_actions = hdf5_normalize_actions
         self._hdf5_file = None
 
         assert hdf5_cache_mode in ["all", "low_dim", None]
@@ -95,6 +101,7 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         # get all keys that needs to be fetched
         self.obs_keys = tuple(obs_keys)
+        self.action_key = action_key
         self.dataset_keys = tuple(dataset_keys)
 
         self.n_frame_stack = frame_stack
@@ -117,8 +124,11 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         # maybe prepare for observation normalization
         self.obs_normalization_stats = None
+        self.action_normalization_stats = None
         if self.hdf5_normalize_obs:
             self.obs_normalization_stats = self.normalize_obs()
+        if self.hdf5_normalize_actions:
+            self.action_normalization_stats = self.normalize_actions()
 
         # maybe store dataset in memory for fast access
         if self.hdf5_cache_mode in ["all", "low_dim"]:
@@ -135,6 +145,7 @@ class SequenceDataset(torch.utils.data.Dataset):
                 demo_list=self.demos,
                 hdf5_file=self.hdf5_file,
                 obs_keys=self.obs_keys_in_memory,
+                action_key=self.action_key,
                 dataset_keys=self.dataset_keys,
                 load_next_obs=self.load_next_obs
             )
@@ -261,7 +272,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         """
         return self.total_num_sequences
 
-    def load_dataset_in_memory(self, demo_list, hdf5_file, obs_keys, dataset_keys, load_next_obs):
+    def load_dataset_in_memory(self, demo_list, hdf5_file, obs_keys, action_key, dataset_keys, load_next_obs):
         """
         Loads the hdf5 dataset into memory, preserving the structure of the file. Note that this
         differs from `self.getitem_cache`, which, if active, actually caches the outputs of the
@@ -287,6 +298,9 @@ class SequenceDataset(torch.utils.data.Dataset):
             all_data[ep]["obs"] = {k: hdf5_file["data/{}/obs/{}".format(ep, k)][()] for k in obs_keys}
             if load_next_obs:
                 all_data[ep]["next_obs"] = {k: hdf5_file["data/{}/next_obs/{}".format(ep, k)][()] for k in obs_keys}
+            # get actions
+            all_data[ep]["actions"] = {action_key: hdf5_file["data/{}/actions/{}".format(ep, action_key)][()].astype('float32')}
+
             # get other dataset keys
             for k in dataset_keys:
                 if k in hdf5_file["data/{}".format(ep)]:
@@ -352,6 +366,53 @@ class SequenceDataset(torch.utils.data.Dataset):
             obs_normalization_stats[k]["std"] = (np.sqrt(merged_stats[k]["sqdiff"] / merged_stats[k]["n"]) + 1e-3).astype(np.float32)
         return obs_normalization_stats
 
+    def normalize_actions(self):
+        """
+        Computes a dataset-wide mean and standard deviation for the actions 
+        (per dimension and per obs key) and returns it.
+        """
+        def _compute_traj_stats(traj_actions):
+            """
+            Helper function to compute statistics over a single trajectory of observations.
+            """
+            traj_stats = {}
+            traj_stats["n"] = traj_actions.shape[0]
+            traj_stats["mean"] = traj_actions.mean(axis=0, keepdims=True) # [1, ...]
+            traj_stats["sqdiff"] = ((traj_actions - traj_stats["mean"]) ** 2).sum(axis=0, keepdims=True) # [1, ...]
+            return traj_stats
+
+        def _aggregate_traj_stats(traj_stats_a, traj_stats_b):
+            """
+            Helper function to aggregate trajectory statistics.
+            See https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+            for more information.
+            """
+            n_a, avg_a, M2_a = traj_stats_a["n"], traj_stats_a["mean"], traj_stats_a["sqdiff"]
+            n_b, avg_b, M2_b = traj_stats_b["n"], traj_stats_b["mean"], traj_stats_b["sqdiff"]
+            n = n_a + n_b
+            mean = (n_a * avg_a + n_b * avg_b) / n
+            delta = (avg_b - avg_a)
+            M2 = M2_a + M2_b + (delta ** 2) * (n_a * n_b) / n
+            merged_stats = dict(n=n, mean=mean, sqdiff=M2)
+            return merged_stats
+
+        # Run through all trajectories. For each one, compute minimal action statistics, and then aggregate
+        # with the previous statistics.
+        ep = self.demos[0]
+        action_traj = self.hdf5_file["data/{}/actions/{}".format(ep, self.action_key)][()].astype('float32')
+        merged_stats = _compute_traj_stats(action_traj)
+        print("SequenceDataset: normalizing observations...")
+        for ep in LogUtils.custom_tqdm(self.demos[1:]):
+            action_traj = self.hdf5_file["data/{}/actions/{}".format(ep, self.action_key)][()].astype('float32')
+            traj_stats = _compute_traj_stats(action_traj)
+            merged_stats = _aggregate_traj_stats(merged_stats, traj_stats)
+
+        action_normalization_stats = {}
+        action_normalization_stats["mean"] = merged_stats["mean"].astype(np.float32)
+        action_normalization_stats["std"] = (np.sqrt(merged_stats["sqdiff"] / merged_stats["n"]) + 1e-3).astype(np.float32)
+        return {"actions": action_normalization_stats}
+
+
     def get_obs_normalization_stats(self):
         """
         Returns dictionary of mean and std for each observation key if using
@@ -365,6 +426,19 @@ class SequenceDataset(torch.utils.data.Dataset):
         """
         assert self.hdf5_normalize_obs, "not using observation normalization!"
         return deepcopy(self.obs_normalization_stats)
+    
+    def get_action_normalization_stats(self):
+        """ 
+        Returns dictionary of mean and std for the action key if using
+        action normalization, otherwise None.
+
+        Returns:
+            action_normalization_stats (dict): a dictionary for action
+            normalization. This contains a "mean" and "std" of shape (1, ...)
+            where ... is the default shape for the action.
+        """
+        assert self.hdf5_normalize_actions, "not using action normalization!"
+        return deepcopy(self.action_normalization_stats)
 
     def get_dataset_for_ep(self, ep, key):
         """
@@ -378,15 +452,19 @@ class SequenceDataset(torch.utils.data.Dataset):
             # if key is an observation, it may not be in memory
             if '/' in key:
                 key1, key2 = key.split('/')
-                assert(key1 in ['obs', 'next_obs'])
-                if key2 not in self.obs_keys_in_memory:
+                if key1 in ['obs', 'next_obs'] and key2 not in self.obs_keys_in_memory:
                     key_should_be_in_memory = False
+                elif key1 in ['actions'] and key2 != self.action_key:
+                    key_should_be_in_memory = False
+                else:
+                    assert key1 in ['obs', 'next_obs', 'actions']
+                
 
         if key_should_be_in_memory:
             # read cache
             if '/' in key:
                 key1, key2 = key.split('/')
-                assert(key1 in ['obs', 'next_obs'])
+                assert(key1 in ['obs', 'next_obs', "actions"])
                 ret = self.hdf5_cache[ep][key1][key2]
             else:
                 ret = self.hdf5_cache[ep][key]
@@ -433,6 +511,15 @@ class SequenceDataset(torch.utils.data.Dataset):
         goal_index = None
         if self.goal_mode == "last":
             goal_index = end_index_in_demo - 1
+
+        meta["actions"] = self.get_action_sequence_from_demo(
+                demo_id,
+                index_in_demo=index_in_demo,
+                key=self.action_key,
+                num_frames_to_stack=self.n_frame_stack - 1,
+                seq_length=self.seq_length,
+                prefix="actions",
+                )
 
         meta["obs"] = self.get_obs_sequence_from_demo(
             demo_id,
@@ -539,6 +626,33 @@ class SequenceDataset(torch.utils.data.Dataset):
             obs["pad_mask"] = pad_mask
 
         return obs
+
+    def get_action_sequence_from_demo(self, demo_id, index_in_demo, key, num_frames_to_stack=0, seq_length=1, prefix="actions"):
+        """
+        Extract a (sub)sequence of observation items from a demo given the @keys of the items.
+
+        Args:
+            demo_id (str): id of the demo, e.g., demo_0
+            index_in_demo (int): beginning index of the sequence wrt the demo
+            keys (str) : key to extract
+            num_frames_to_stack (int): numbers of frame to stack. Seq gets prepended with repeated items if out of range
+            seq_length (int): sequence length to extract. Seq gets post-pended with repeated items if out of range
+            prefix (str): one of "obs", "next_obs"
+
+        Returns:
+            a dictionary of extracted items.
+        """
+        action, pad_mask = self.get_sequence_from_demo(
+            demo_id,
+            index_in_demo=index_in_demo,
+            keys=('{}/{}'.format(prefix, key),),
+            num_frames_to_stack=num_frames_to_stack,
+            seq_length=seq_length,
+        )
+        action = action[f"{prefix}/{key}"]
+        if self.get_pad_mask:
+            action["pad_mask"] = pad_mask
+        return action
 
     def get_dataset_sequence_from_demo(self, demo_id, index_in_demo, keys, num_frames_to_stack=0, seq_length=1):
         """

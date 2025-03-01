@@ -111,7 +111,7 @@ def get_env_metadata_from_dataset(dataset_path, set_env_specific_obs_processors=
     return env_meta
 
 
-def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=False):
+def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, action_key=None, verbose=False):
     """
     Retrieves shape metadata from dataset.
 
@@ -140,7 +140,8 @@ def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, verbose=Fal
     demo = f["data/{}".format(demo_id)]
 
     # action dimension
-    shape_meta['ac_dim'] = f["data/{}/actions".format(demo_id)].shape[1]
+    shape_meta['ac_dim'] = f["data/{}/actions/{}".format(demo_id, action_key)].shape[1]
+    shape_meta['action_key'] = action_key
 
     # observation dimensions
     all_shapes = OrderedDict()

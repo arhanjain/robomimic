@@ -201,7 +201,7 @@ class Algo(object):
         """
         return batch
 
-    def postprocess_batch_for_training(self, batch, obs_normalization_stats):
+    def postprocess_batch_for_training(self, batch, obs_normalization_stats, action_normalization_stats):
         """
         Does some operations (like channel swap, uint8 to float conversion, normalization)
         after @process_batch_for_training is called, in order to ensure these operations
@@ -223,11 +223,12 @@ class Algo(object):
 
         # ensure obs_normalization_stats are torch Tensors on proper device
         obs_normalization_stats = TensorUtils.to_float(TensorUtils.to_device(TensorUtils.to_tensor(obs_normalization_stats), self.device))
+        action_normalization_stats = TensorUtils.to_float(TensorUtils.to_device(TensorUtils.to_tensor(action_normalization_stats), self.device))
 
         # we will search the nested batch dictionary for the following special batch dict keys
         # and apply the processing function to their values (which correspond to observations)
         obs_keys = ["obs", "next_obs", "goal_obs"]
-
+        action_key = "actions"
         def recurse_helper(d):
             """
             Apply process_obs_dict to values in nested dictionary d that match a key in obs_keys.
@@ -239,6 +240,12 @@ class Algo(object):
                         d[k] = ObsUtils.process_obs_dict(d[k])
                         if obs_normalization_stats is not None:
                             d[k] = ObsUtils.normalize_obs(d[k], obs_normalization_stats=obs_normalization_stats)
+                elif k == action_key:
+                    # found key - stop search and process action
+                    d[k] = ObsUtils.normalize_obs({k: d[k]}, obs_normalization_stats=action_normalization_stats)[k]
+                    # if d[k] is not None and action_normalization_stats is not None:
+                        # d[k] = TensorUtils.normalize(d[k], action_normalization_stats)
+
                 elif isinstance(d[k], dict):
                     # search down into dictionary
                     recurse_helper(d[k])
