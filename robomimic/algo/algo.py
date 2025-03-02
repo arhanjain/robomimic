@@ -225,6 +225,7 @@ class Algo(object):
         obs_normalization_stats = TensorUtils.to_float(TensorUtils.to_device(TensorUtils.to_tensor(obs_normalization_stats), self.device))
         action_normalization_stats = TensorUtils.to_float(TensorUtils.to_device(TensorUtils.to_tensor(action_normalization_stats), self.device))
 
+
         # we will search the nested batch dictionary for the following special batch dict keys
         # and apply the processing function to their values (which correspond to observations)
         obs_keys = ["obs", "next_obs", "goal_obs"]
@@ -242,10 +243,8 @@ class Algo(object):
                             d[k] = ObsUtils.normalize_obs(d[k], obs_normalization_stats=obs_normalization_stats)
                 elif k == action_key:
                     # found key - stop search and process action
-                    d[k] = ObsUtils.normalize_obs({k: d[k]}, obs_normalization_stats=action_normalization_stats)[k]
-                    # if d[k] is not None and action_normalization_stats is not None:
-                        # d[k] = TensorUtils.normalize(d[k], action_normalization_stats)
-
+                    # d[k] = ObsUtils.normalize_obs({k: d[k]}, obs_normalization_stats=action_normalization_stats)[k]
+                    d[k] = ObsUtils.normalize_action({k: d[k]}, action_normalization_stats=action_normalization_stats)[k]
                 elif isinstance(d[k], dict):
                     # search down into dictionary
                     recurse_helper(d[k])

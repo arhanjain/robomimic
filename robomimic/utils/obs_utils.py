@@ -461,6 +461,30 @@ def get_processed_shape(obs_modality, input_shape):
     """
     return list(process_obs(obs=np.zeros(input_shape), obs_modality=obs_modality).shape)
 
+def normalize_action(action_dict, action_normalization_stats):
+    """
+    Normalize actions between -1 and 1 using the provided "min" and "max" entries
+    so that they can be learned with a tanh activation function.
+    """
+    for m in action_dict:
+        # get rid of extra dimension - we will pad for broadcasting later
+        min = action_normalization_stats[m]["min"][0]
+        max = action_normalization_stats[m]["max"][0]
+        # shape consistency checks
+        m_num_dims = len(min.shape)
+        shape_len_diff = len(action_dict[m].shape) - m_num_dims
+        assert shape_len_diff >= 0, "shape length mismatch in @normalize_action"
+        assert action_dict[m].shape[-m_num_dims:] == min.shape, "shape mismatch in @normalize_action"
+        # actions can have one or more leading batch dims - prepare for broadcasting.
+        # 
+        # as an example, if the actions has shape [b, t, d] and our min / max stats are shape [d]
+        # then we should pad the stats to shape [1, 1, d].
+        reshape_padding = tuple([1] * shape_len_diff)
+        min = min.reshape(reshape_padding + tuple(min.shape))
+        max = max.reshape(reshape_padding + tuple(max.shape))
+        action_dict[m] = 2.0 * (action_dict[m] - min) / (max - min) - 1.0
+
+    return action_dict
 
 def normalize_obs(obs_dict, obs_normalization_stats):
     """
@@ -494,10 +518,10 @@ def normalize_obs(obs_dict, obs_normalization_stats):
         assert shape_len_diff >= 0, "shape length mismatch in @normalize_obs"
         assert obs_dict[m].shape[-m_num_dims:] == mean.shape, "shape mismatch in @normalize_obs"
 
-        # Obs can have one or more leading batch dims - prepare for broadcasting.
+        # obs can have one or more leading batch dims - prepare for broadcasting.
         # 
-        # As an example, if the obs has shape [B, T, D] and our mean / std stats are shape [D]
-        # then we should pad the stats to shape [1, 1, D].
+        # as an example, if the obs has shape [b, t, d] and our mean / std stats are shape [d]
+        # then we should pad the stats to shape [1, 1, d].
         reshape_padding = tuple([1] * shape_len_diff)
         mean = mean.reshape(reshape_padding + tuple(mean.shape))
         std = std.reshape(reshape_padding + tuple(std.shape))

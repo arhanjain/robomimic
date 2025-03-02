@@ -6,6 +6,10 @@ from robomimic.config.base_config import BaseConfig
 
 class DiffusionPolicyConfig(BaseConfig):
     ALGO_NAME = "diffusion_policy"
+
+    def train_config(self):
+
+        super(DiffusionPolicyConfig, self).train_config()
     
     def algo_config(self):
         """

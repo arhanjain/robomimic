@@ -139,17 +139,24 @@ class DiffusionPolicyUNet(PolicyAlgo):
         input_batch["goal_obs"] = batch.get("goal_obs", None) # goals may not be present
         input_batch["actions"] = batch["actions"][:, :Tp, :]
         
+        
+        return TensorUtils.to_device(TensorUtils.to_float(input_batch), self.device)
+
+    # override
+    def postprocess_batch_for_training(self, batch, obs_normalization_stats, action_normalization_stats):
+        ret= super().postprocess_batch_for_training(batch, obs_normalization_stats, action_normalization_stats)
+
         # check if actions are normalized to [-1,1]
         if not self.action_check_done:
-            actions = input_batch["actions"]
+            actions = ret["actions"]
             in_range = (-1 <= actions) & (actions <= 1)
             all_in_range = torch.all(in_range).item()
             if not all_in_range:
                 raise ValueError('"actions" must be in range [-1,1] for Diffusion Policy! Check if hdf5_normalize_action is enabled.')
             self.action_check_done = True
         
-        return TensorUtils.to_device(TensorUtils.to_float(input_batch), self.device)
-        
+        return ret
+
     def train_on_batch(self, batch, epoch, validate=False):
         """
         Training on a single batch of data.

@@ -379,6 +379,9 @@ class SequenceDataset(torch.utils.data.Dataset):
             traj_stats["n"] = traj_actions.shape[0]
             traj_stats["mean"] = traj_actions.mean(axis=0, keepdims=True) # [1, ...]
             traj_stats["sqdiff"] = ((traj_actions - traj_stats["mean"]) ** 2).sum(axis=0, keepdims=True) # [1, ...]
+            traj_stats["min"] = traj_actions.min(axis=0, keepdims=True)
+            traj_stats["max"] = traj_actions.max(axis=0, keepdims=True)
+
             return traj_stats
 
         def _aggregate_traj_stats(traj_stats_a, traj_stats_b):
@@ -393,7 +396,12 @@ class SequenceDataset(torch.utils.data.Dataset):
             mean = (n_a * avg_a + n_b * avg_b) / n
             delta = (avg_b - avg_a)
             M2 = M2_a + M2_b + (delta ** 2) * (n_a * n_b) / n
-            merged_stats = dict(n=n, mean=mean, sqdiff=M2)
+
+            min = np.minimum(traj_stats_a["min"], traj_stats_b["min"])
+            max = np.maximum(traj_stats_a["max"], traj_stats_b["max"])
+
+            merged_stats = dict(n=n, mean=mean, sqdiff=M2,
+                                min=min, max=max)
             return merged_stats
 
         # Run through all trajectories. For each one, compute minimal action statistics, and then aggregate
@@ -410,6 +418,9 @@ class SequenceDataset(torch.utils.data.Dataset):
         action_normalization_stats = {}
         action_normalization_stats["mean"] = merged_stats["mean"].astype(np.float32)
         action_normalization_stats["std"] = (np.sqrt(merged_stats["sqdiff"] / merged_stats["n"]) + 1e-3).astype(np.float32)
+        action_normalization_stats["min"] = merged_stats["min"].astype(np.float32)
+        action_normalization_stats["max"] = merged_stats["max"].astype(np.float32)
+
         return {"actions": action_normalization_stats}
 
 
