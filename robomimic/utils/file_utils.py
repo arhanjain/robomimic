@@ -391,11 +391,17 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
 
     # maybe restore observation normalization stats
     obs_normalization_stats = ckpt_dict.get("obs_normalization_stats", None)
+    action_normalization_stats = ckpt_dict.get("action_normalization_stats", None)
     if obs_normalization_stats is not None:
         assert config.train.hdf5_normalize_obs
         for m in obs_normalization_stats:
             for k in obs_normalization_stats[m]:
                 obs_normalization_stats[m][k] = np.array(obs_normalization_stats[m][k])
+    if action_normalization_stats is not None:
+        assert config.train.hdf5_normalize_actions
+        for m in action_normalization_stats:
+            for k in action_normalization_stats[m]:
+                action_normalization_stats[m][k] = np.array(action_normalization_stats[m][k])
 
     if device is None:
         # get torch device
@@ -411,7 +417,7 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
     )
     model.deserialize(ckpt_dict["model"])
     model.set_eval()
-    model = RolloutPolicy(model, obs_normalization_stats=obs_normalization_stats)
+    model = RolloutPolicy(model, obs_normalization_stats=obs_normalization_stats, action_normalization_stats=action_normalization_stats)
     if verbose:
         print("============= Loaded Policy =============")
         print(model)

@@ -491,6 +491,27 @@ def normalize_action(action_dict, action_normalization_stats):
 
     return action_dict
 
+def unnormalize_action(action_dict, action_normalization_stats):
+    """
+    Unnormalize actions that were normalized using @normalize_action.
+    """
+    for m in action_dict:
+        min = action_normalization_stats[m]["min"][0]
+        max = action_normalization_stats[m]["max"][0]
+        # shape consistency checks
+        m_num_dims = len(min.shape)
+        shape_len_diff = len(action_dict[m].shape) - m_num_dims
+        assert shape_len_diff >= 0, "shape length mismatch in @unnormalize_action"
+        assert action_dict[m].shape[-m_num_dims:] == min.shape, "shape mismatch in @unnormalize_action"
+        # actions can have one or more leading batch dims - prepare for broadcasting.
+        reshape_padding = tuple([1] * shape_len_diff)
+        min = min.reshape(reshape_padding + tuple(min.shape))
+        max = max.reshape(reshape_padding + tuple(max.shape))
+        action_dict[m] = 0.5 * (action_dict[m] + 1.0) * (max - min) + min
+    return action_dict
+        
+
+
 def normalize_obs(obs_dict, obs_normalization_stats):
     """
     Normalize observations using the provided "mean" and "std" entries 
