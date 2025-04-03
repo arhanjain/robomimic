@@ -353,7 +353,6 @@ class ObservationDecoder(Module):
         msg = header + '(' + msg + '\n)'
         return msg
 
-
 class ObservationGroupEncoder(Module):
     """
     This class allows networks to encode multiple observation dictionaries into a single

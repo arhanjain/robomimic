@@ -73,12 +73,25 @@ if __name__ == "__main__":
 
     # extract length of each trajectory in the file
     traj_lengths = []
-    action_min = np.inf
-    action_max = -np.inf
+    # action_min = np.inf
+    # action_max = -np.inf
+    action_stats = {}
     for ep in demos:
-        traj_lengths.append(f["data/{}/actions".format(ep)].shape[0])
-        action_min = min(action_min, np.min(f["data/{}/actions".format(ep)][()]))
-        action_max = max(action_max, np.max(f["data/{}/actions".format(ep)][()]))
+        # get first action entry
+        action_key = next(iter(f["data/{}/actions".format(ep)].keys()))
+        traj_lengths.append(f["data/{}/actions/{}".format(ep, action_key)].shape[0])
+
+        # action_min = min(action_min, np.min(f["data/{}/actions/{}".format(ep, action_key)][()]))
+        # action_max = max(action_max, np.max(f["data/{}/actions/{}".format(ep, action_key)][()]))
+        if action_key not in action_stats:
+            action_stats[action_key] = {
+                "min": np.inf,
+                "max": -np.inf,
+            }
+        else:
+            action_stats[action_key]["min"] = min(action_stats[action_key]["min"], np.min(f["data/{}/actions/{}".format(ep, action_key)][()]))
+            action_stats[action_key]["max"] = max(action_stats[action_key]["max"], np.max(f["data/{}/actions/{}".format(ep, action_key)][()]))
+        
     traj_lengths = np.array(traj_lengths)
 
     # report statistics on the data
@@ -89,8 +102,8 @@ if __name__ == "__main__":
     print("traj length std: {}".format(np.std(traj_lengths)))
     print("traj length min: {}".format(np.min(traj_lengths)))
     print("traj length max: {}".format(np.max(traj_lengths)))
-    print("action min: {}".format(action_min))
-    print("action max: {}".format(action_max))
+    # print("action min: {}".format(action_min))
+    # print("action max: {}".format(action_max))
     print("")
     print("==== Filter Keys ====")
     if all_filter_keys is not None:
@@ -114,11 +127,11 @@ if __name__ == "__main__":
     for ep in demos:
         print("episode {} with {} transitions".format(ep, f["data/{}".format(ep)].attrs["num_samples"]))
         for k in f["data/{}".format(ep)]:
-            if k in ["obs", "next_obs"]:
+            if k in ["obs", "next_obs", "actions"]:
                 print("    key: {}".format(k))
                 for obs_k in f["data/{}/{}".format(ep, k)]:
                     shape = f["data/{}/{}/{}".format(ep, k, obs_k)].shape
-                    print("        observation key {} with shape {}".format(obs_k, shape))
+                    print("        key {} with shape {}".format(obs_k, shape))
             elif isinstance(f["data/{}/{}".format(ep, k)], h5py.Dataset):
                 key_shape = f["data/{}/{}".format(ep, k)].shape
                 print("    key: {} with shape {}".format(k, key_shape))
@@ -130,5 +143,5 @@ if __name__ == "__main__":
 
     # maybe display error message
     print("")
-    if (action_min < -1.) or (action_max > 1.):
-        raise Exception("Dataset should have actions in [-1., 1.] but got bounds [{}, {}]".format(action_min, action_max))
+    # if (action_min < -1.) or (action_max > 1.):
+    #     raise Exception("Dataset should have actions in [-1., 1.] but got bounds [{}, {}]".format(action_min, action_max))

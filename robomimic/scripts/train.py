@@ -78,7 +78,7 @@ def train(config, device):
     shape_meta = FileUtils.get_shape_metadata_from_dataset(
         dataset_path=config.train.data,
         all_obs_keys=config.all_obs_keys,
-        action_key = config.train.action_key,
+        action_keys = config.train.action_keys,
         verbose=True
     )
 
@@ -122,7 +122,8 @@ def train(config, device):
         algo_name=config.algo_name,
         config=config,
         obs_key_shapes=shape_meta["all_shapes"],
-        ac_dim=shape_meta["ac_dim"],
+        # ac_dim=shape_meta["ac_dim"],
+        action_key_shapes=shape_meta["all_action_shapes"],
         device=device,
     )
     
@@ -136,7 +137,7 @@ def train(config, device):
 
     # load training data
     trainset, validset = TrainUtils.load_data_for_training(
-        config, obs_keys=shape_meta["all_obs_keys"], action_key=shape_meta["action_key"])
+        config, obs_keys=shape_meta["all_obs_keys"], action_keys=shape_meta["all_action_keys"])
     train_sampler = trainset.get_dataset_sampler()
     print("\n============= Training Dataset =============")
     print(trainset)

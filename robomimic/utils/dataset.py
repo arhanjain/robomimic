@@ -23,7 +23,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         self,
         hdf5_path,
         obs_keys,
-        action_key,
+        action_keys,
         dataset_keys,
         frame_stack=1,
         seq_length=1,
@@ -101,7 +101,7 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         # get all keys that needs to be fetched
         self.obs_keys = tuple(obs_keys)
-        self.action_key = action_key
+        self.action_keys = action_keys
         self.dataset_keys = tuple(dataset_keys)
 
         self.n_frame_stack = frame_stack
@@ -145,7 +145,7 @@ class SequenceDataset(torch.utils.data.Dataset):
                 demo_list=self.demos,
                 hdf5_file=self.hdf5_file,
                 obs_keys=self.obs_keys_in_memory,
-                action_key=self.action_key,
+                action_keys=self.action_keys,
                 dataset_keys=self.dataset_keys,
                 load_next_obs=self.load_next_obs
             )
@@ -272,7 +272,7 @@ class SequenceDataset(torch.utils.data.Dataset):
         """
         return self.total_num_sequences
 
-    def load_dataset_in_memory(self, demo_list, hdf5_file, obs_keys, action_key, dataset_keys, load_next_obs):
+    def load_dataset_in_memory(self, demo_list, hdf5_file, obs_keys, action_keys, dataset_keys, load_next_obs):
         """
         Loads the hdf5 dataset into memory, preserving the structure of the file. Note that this
         differs from `self.getitem_cache`, which, if active, actually caches the outputs of the
@@ -299,7 +299,7 @@ class SequenceDataset(torch.utils.data.Dataset):
             if load_next_obs:
                 all_data[ep]["next_obs"] = {k: hdf5_file["data/{}/next_obs/{}".format(ep, k)][()] for k in obs_keys}
             # get actions
-            all_data[ep]["actions"] = {action_key: hdf5_file["data/{}/actions/{}".format(ep, action_key)][()].astype('float32')}
+            all_data[ep]["actions"] = {action_key: hdf5_file["data/{}/actions/{}".format(ep, action_key)][()].astype('float32') for action_key in action_keys}
 
             # get other dataset keys
             for k in dataset_keys:
@@ -371,17 +371,17 @@ class SequenceDataset(torch.utils.data.Dataset):
         Computes a dataset-wide mean and standard deviation for the actions 
         (per dimension and per obs key) and returns it.
         """
-        def _compute_traj_stats(traj_actions):
+        def _compute_traj_stats(traj_actions_dict):
             """
             Helper function to compute statistics over a single trajectory of observations.
             """
-            traj_stats = {}
-            traj_stats["n"] = traj_actions.shape[0]
-            traj_stats["mean"] = traj_actions.mean(axis=0, keepdims=True) # [1, ...]
-            traj_stats["sqdiff"] = ((traj_actions - traj_stats["mean"]) ** 2).sum(axis=0, keepdims=True) # [1, ...]
-            traj_stats["min"] = traj_actions.min(axis=0, keepdims=True)
-            traj_stats["max"] = traj_actions.max(axis=0, keepdims=True)
-
+            traj_stats = { k : {} for k in traj_actions_dict }
+            for k in traj_actions_dict:
+                traj_stats[k]["n"] = traj_actions_dict[k].shape[0]
+                traj_stats[k]["mean"] = traj_actions_dict[k].mean(axis=0, keepdims=True) # [1, ...]
+                traj_stats[k]["sqdiff"] = ((traj_actions_dict[k] - traj_stats[k]["mean"]) ** 2).sum(axis=0, keepdims=True) # [1, ...]
+                traj_stats[k]["min"] = traj_actions_dict[k].min(axis=0, keepdims=True)
+                traj_stats[k]["max"] = traj_actions_dict[k].max(axis=0, keepdims=True)
             return traj_stats
 
         def _aggregate_traj_stats(traj_stats_a, traj_stats_b):
@@ -390,38 +390,43 @@ class SequenceDataset(torch.utils.data.Dataset):
             See https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
             for more information.
             """
-            n_a, avg_a, M2_a = traj_stats_a["n"], traj_stats_a["mean"], traj_stats_a["sqdiff"]
-            n_b, avg_b, M2_b = traj_stats_b["n"], traj_stats_b["mean"], traj_stats_b["sqdiff"]
-            n = n_a + n_b
-            mean = (n_a * avg_a + n_b * avg_b) / n
-            delta = (avg_b - avg_a)
-            M2 = M2_a + M2_b + (delta ** 2) * (n_a * n_b) / n
+            merged_stats = {}
+            for k in traj_stats_a:
+                n_a, avg_a, M2_a = traj_stats_a[k]["n"], traj_stats_a[k]["mean"], traj_stats_a[k]["sqdiff"]
+                n_b, avg_b, M2_b = traj_stats_b[k]["n"], traj_stats_b[k]["mean"], traj_stats_b[k]["sqdiff"]
+                n = n_a + n_b
+                mean = (n_a * avg_a + n_b * avg_b) / n
+                delta = (avg_b - avg_a)
+                M2 = M2_a + M2_b + (delta ** 2) * (n_a * n_b) / n
 
-            min = np.minimum(traj_stats_a["min"], traj_stats_b["min"])
-            max = np.maximum(traj_stats_a["max"], traj_stats_b["max"])
+                min = np.minimum(traj_stats_a[k]["min"], traj_stats_b[k]["min"])
+                max = np.maximum(traj_stats_a[k]["max"], traj_stats_b[k]["max"])
 
-            merged_stats = dict(n=n, mean=mean, sqdiff=M2,
-                                min=min, max=max)
+                merged_stats[k] = dict(n=n, mean=mean, sqdiff=M2,
+                                    min=min, max=max)
             return merged_stats
 
         # Run through all trajectories. For each one, compute minimal action statistics, and then aggregate
         # with the previous statistics.
         ep = self.demos[0]
-        action_traj = self.hdf5_file["data/{}/actions/{}".format(ep, self.action_key)][()].astype('float32')
+        action_traj = {action_key: self.hdf5_file["data/{}/actions/{}".format(ep, action_key)][()].astype('float32') for action_key in self.action_keys}
         merged_stats = _compute_traj_stats(action_traj)
-        print("SequenceDataset: normalizing observations...")
+        print("SequenceDataset: normalizing actions...")
         for ep in LogUtils.custom_tqdm(self.demos[1:]):
-            action_traj = self.hdf5_file["data/{}/actions/{}".format(ep, self.action_key)][()].astype('float32')
+            action_traj = {action_key: self.hdf5_file["data/{}/actions/{}".format(ep, action_key)][()].astype('float32') for action_key in self.action_keys}
             traj_stats = _compute_traj_stats(action_traj)
             merged_stats = _aggregate_traj_stats(merged_stats, traj_stats)
 
-        action_normalization_stats = {}
-        action_normalization_stats["mean"] = merged_stats["mean"].astype(np.float32)
-        action_normalization_stats["std"] = (np.sqrt(merged_stats["sqdiff"] / merged_stats["n"]) + 1e-3).astype(np.float32)
-        action_normalization_stats["min"] = merged_stats["min"].astype(np.float32)
-        action_normalization_stats["max"] = merged_stats["max"].astype(np.float32)
+            # note we add a small tolerance of 1e-3 for std
 
-        return {"actions": action_normalization_stats}
+        action_normalization_stats = {k: {} for k in merged_stats}
+        for k in merged_stats:
+            action_normalization_stats[k]["mean"] = merged_stats[k]["mean"].astype(np.float32)
+            action_normalization_stats[k]["std"] = (np.sqrt(merged_stats[k]["sqdiff"] / merged_stats[k]["n"]) + 1e-3).astype(np.float32)
+            action_normalization_stats[k]["min"] = merged_stats[k]["min"].astype(np.float32)
+            action_normalization_stats[k]["max"] = merged_stats[k]["max"].astype(np.float32)
+
+        return action_normalization_stats
 
 
     def get_obs_normalization_stats(self):
@@ -465,7 +470,7 @@ class SequenceDataset(torch.utils.data.Dataset):
                 key1, key2 = key.split('/')
                 if key1 in ['obs', 'next_obs'] and key2 not in self.obs_keys_in_memory:
                     key_should_be_in_memory = False
-                elif key1 in ['actions'] and key2 != self.action_key:
+                elif key1 in ['actions'] and key2 not in self.action_keys:
                     key_should_be_in_memory = False
                 else:
                     assert key1 in ['obs', 'next_obs', 'actions']
@@ -523,14 +528,23 @@ class SequenceDataset(torch.utils.data.Dataset):
         if self.goal_mode == "last":
             goal_index = end_index_in_demo - 1
 
-        meta["actions"] = self.get_action_sequence_from_demo(
-                demo_id,
-                index_in_demo=index_in_demo,
-                key=self.action_key,
-                num_frames_to_stack=self.n_frame_stack - 1,
-                seq_length=self.seq_length,
-                prefix="actions",
-                )
+        # TODO CLEANUP
+        # meta["actions"] = self.get_action_sequence_from_demo(
+        #         demo_id,
+        #         index_in_demo=index_in_demo,
+        #         keys=self.action_keys,
+        #         num_frames_to_stack=self.n_frame_stack - 1,
+        #         seq_length=self.seq_length,
+        #         prefix="actions",
+        #         )
+        meta["actions"] = self.get_obs_sequence_from_demo(
+            demo_id,
+            index_in_demo=index_in_demo,
+            keys=self.action_keys,
+            num_frames_to_stack=self.n_frame_stack-1,
+            seq_length=self.seq_length,
+            prefix="actions"
+        )
 
         meta["obs"] = self.get_obs_sequence_from_demo(
             demo_id,
@@ -638,7 +652,7 @@ class SequenceDataset(torch.utils.data.Dataset):
 
         return obs
 
-    def get_action_sequence_from_demo(self, demo_id, index_in_demo, key, num_frames_to_stack=0, seq_length=1, prefix="actions"):
+    def get_action_sequence_from_demo(self, demo_id, index_in_demo, keys, num_frames_to_stack=0, seq_length=1, prefix="actions"):
         """
         Extract a (sub)sequence of observation items from a demo given the @keys of the items.
 

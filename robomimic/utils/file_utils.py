@@ -111,7 +111,7 @@ def get_env_metadata_from_dataset(dataset_path, set_env_specific_obs_processors=
     return env_meta
 
 
-def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, action_key=None, verbose=False):
+def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, action_keys=None, verbose=False):
     """
     Retrieves shape metadata from dataset.
 
@@ -140,8 +140,18 @@ def get_shape_metadata_from_dataset(dataset_path, all_obs_keys=None, action_key=
     demo = f["data/{}".format(demo_id)]
 
     # action dimension
-    shape_meta['ac_dim'] = f["data/{}/actions/{}".format(demo_id, action_key)].shape[1]
-    shape_meta['action_key'] = action_key
+    all_action_shapes = OrderedDict()
+    assert action_keys is not None, "action_keys must be provided"
+    for k in sorted(action_keys):
+        if verbose:
+            print("action key {} with shape {}".format(k, demo["actions/{}".format(k)].shape))
+        all_action_shapes[k] = list(demo["actions/{}".format(k)].shape[1:])
+
+    shape_meta["all_action_shapes"] = all_action_shapes
+    shape_meta["all_action_keys"] = action_keys
+    shape_meta["ac_dim"] = sum([demo["actions/{}".format(k)].shape[-1] for k in action_keys])
+    # shape_meta['ac_dim'] = f["data/{}/actions/{}".format(demo_id, action_key)].shape[1]
+    # shape_meta['action_key'] = action_key
 
     # observation dimensions
     all_shapes = OrderedDict()
@@ -412,7 +422,8 @@ def policy_from_checkpoint(device=None, ckpt_path=None, ckpt_dict=None, verbose=
         algo_name,
         config,
         obs_key_shapes=shape_meta["all_shapes"],
-        ac_dim=shape_meta["ac_dim"],
+        # ac_dim=shape_meta["ac_dim"],
+        action_key_shapes=shape_meta["all_action_shapes"],
         device=device,
     )
     model.deserialize(ckpt_dict["model"])

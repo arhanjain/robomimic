@@ -80,7 +80,7 @@ def get_exp_dir(config, auto_remove_exp_dir=False):
     return log_dir, output_dir, video_dir
 
 
-def load_data_for_training(config, obs_keys, action_key):
+def load_data_for_training(config, obs_keys, action_keys):
     """
     Data loading at the start of an algorithm.
 
@@ -116,16 +116,16 @@ def load_data_for_training(config, obs_keys, action_key):
         )
         assert set(train_demo_keys).isdisjoint(set(valid_demo_keys)), "training demonstrations overlap with " \
             "validation demonstrations!"
-        train_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=train_filter_by_attribute)
-        valid_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=valid_filter_by_attribute)
+        train_dataset = dataset_factory(config, obs_keys, action_keys, filter_by_attribute=train_filter_by_attribute)
+        valid_dataset = dataset_factory(config, obs_keys, action_keys, filter_by_attribute=valid_filter_by_attribute)
     else:
-        train_dataset = dataset_factory(config, obs_keys, action_key, filter_by_attribute=train_filter_by_attribute)
+        train_dataset = dataset_factory(config, obs_keys, action_keys, filter_by_attribute=train_filter_by_attribute)
         valid_dataset = None
 
     return train_dataset, valid_dataset
 
 
-def dataset_factory(config, obs_keys, action_key, filter_by_attribute=None, dataset_path=None):
+def dataset_factory(config, obs_keys, action_keys, filter_by_attribute=None, dataset_path=None):
     """
     Create a SequenceDataset instance to pass to a torch DataLoader.
 
@@ -150,7 +150,7 @@ def dataset_factory(config, obs_keys, action_key, filter_by_attribute=None, data
     ds_kwargs = dict(
         hdf5_path=dataset_path,
         obs_keys=obs_keys,
-        action_key=action_key,
+        action_keys=action_keys,
         dataset_keys=config.train.dataset_keys,
         load_next_obs=config.train.hdf5_load_next_obs, # whether to load next observations (s') from dataset
         frame_stack=config.train.frame_stack,

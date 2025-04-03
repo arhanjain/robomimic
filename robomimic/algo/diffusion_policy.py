@@ -54,11 +54,17 @@ class DiffusionPolicyUNet(PolicyAlgo):
         # set up different observation groups for @MIMO_MLP
         observation_group_shapes = OrderedDict()
         observation_group_shapes["obs"] = OrderedDict(self.obs_shapes)
+        action_group_shapes = OrderedDict()
+        action_group_shapes["actions"] = OrderedDict(self.action_shapes)
+
         encoder_kwargs = ObsUtils.obs_encoder_kwargs_from_config(self.obs_config.encoder)
         
         obs_encoder = ObsNets.ObservationGroupEncoder(
             observation_group_shapes=observation_group_shapes,
             encoder_kwargs=encoder_kwargs,
+        )
+        action_encoder = ObsNets.ObservationGroupEncoder(
+            observation_group_shapes=action_group_shapes,
         )
         # IMPORTANT!
         # replace all BatchNorm with GroupNorm to work with EMA
@@ -66,10 +72,11 @@ class DiffusionPolicyUNet(PolicyAlgo):
         obs_encoder = replace_bn_with_gn(obs_encoder)
         
         obs_dim = obs_encoder.output_shape()[0]
+        ac_dim = action_encoder.output_shape()[0]
 
         # create network object
         noise_pred_net = ConditionalUnet1D(
-            input_dim=self.ac_dim,
+            input_dim=ac_dim,
             global_cond_dim=obs_dim*self.algo_config.horizon.observation_horizon
         )
 
@@ -77,7 +84,8 @@ class DiffusionPolicyUNet(PolicyAlgo):
         nets = nn.ModuleDict({
             'policy': nn.ModuleDict({
                 'obs_encoder': obs_encoder,
-                'noise_pred_net': noise_pred_net
+                'noise_pred_net': noise_pred_net,
+                'action_encoder': action_encoder,
             })
         })
 
@@ -137,7 +145,8 @@ class DiffusionPolicyUNet(PolicyAlgo):
         input_batch = dict()
         input_batch["obs"] = {k: batch["obs"][k][:, :To, :] for k in batch["obs"]}
         input_batch["goal_obs"] = batch.get("goal_obs", None) # goals may not be present
-        input_batch["actions"] = batch["actions"][:, :Tp, :]
+        # input_batch["actions"] = batch["actions"][:, :Tp, :]
+        input_batch["actions"] = {k: batch["actions"][k][:, :Tp, :] for k in batch["actions"]}
         
         
         return TensorUtils.to_device(TensorUtils.to_float(input_batch), self.device)
@@ -148,11 +157,12 @@ class DiffusionPolicyUNet(PolicyAlgo):
 
         # check if actions are normalized to [-1,1]
         if not self.action_check_done:
-            actions = ret["actions"]
-            in_range = (-1 <= actions) & (actions <= 1)
-            all_in_range = torch.all(in_range).item()
-            if not all_in_range:
-                raise ValueError('"actions" must be in range [-1,1] for Diffusion Policy! Check if hdf5_normalize_action is enabled.')
+            for k in ret["actions"]:
+                actions = ret["actions"][k]
+                in_range = (-1 <= actions) & (actions <= 1)
+                all_in_range = torch.all(in_range).item()
+                if not all_in_range:
+                    raise ValueError('"actions" must be in range [-1,1] for Diffusion Policy! Check if hdf5_normalize_action is enabled.')
             self.action_check_done = True
         
         return ret
@@ -177,13 +187,20 @@ class DiffusionPolicyUNet(PolicyAlgo):
         To = self.algo_config.horizon.observation_horizon
         Ta = self.algo_config.horizon.action_horizon
         Tp = self.algo_config.horizon.prediction_horizon
-        action_dim = self.ac_dim
-        B = batch['actions'].shape[0]
+
+        action_dim = self.nets['policy']['action_encoder'].output_shape()[0]
+        B = batch['actions'][next(iter(batch["actions"].keys()))].shape[0]
         
         
         with TorchUtils.maybe_no_grad(no_grad=validate):
             info = super(DiffusionPolicyUNet, self).train_on_batch(batch, epoch, validate=validate)
             actions = batch['actions']
+            # actions = TensorUtils.flatten(actions, )
+
+            # B, Tp, Da
+            actions = TensorUtils.time_distributed({"actions": actions}, self.nets["policy"]["action_encoder"],inputs_as_kwargs=True)
+            # actions = self.nets['policy']['action_encoder'](**{"actions": actions})
+            # actions = TensorUtils.reshape_dimensions(actions, begin_axis=0, end_axis=0, target_dims=(B, Tp-1))
             
             # encode obs
             inputs = {
@@ -293,19 +310,19 @@ class DiffusionPolicyUNet(PolicyAlgo):
         # make sure we have at least To observations in obs_queue
         # if not enough, repeat
         # if already full, append one to the obs_queue
-        # n_repeats = max(To - len(self.obs_queue), 1)
-        # self.obs_queue.extend([obs_dict] * n_repeats)
+        n_repeats = max(To - len(self.obs_queue), 1)
+        self.obs_queue.extend([obs_dict] * n_repeats)        
         
         if len(self.action_queue) == 0:
             # no actions left, run inference
             # turn obs_queue into dict of tensors (concat at T dim)
             # import pdb; pdb.set_trace()
-            # obs_dict_list = TensorUtils.list_of_flat_dict_to_dict_of_list(list(self.obs_queue))
-            # obs_dict_tensor = dict((k, torch.cat(v, dim=0).unsqueeze(0)) for k,v in obs_dict_list.items())
+            obs_dict_list = TensorUtils.list_of_flat_dict_to_dict_of_list(list(self.obs_queue))
+            obs_dict_tensor = dict((k, torch.cat(v, dim=0).unsqueeze(0)) for k,v in obs_dict_list.items())
             
             # run inference
             # [1,T,Da]
-            action_sequence = self._get_action_trajectory(obs_dict=obs_dict)
+            action_sequence = self._get_action_trajectory(obs_dict=obs_dict_tensor)
             
             # put actions into the queue
             self.action_queue.extend(action_sequence[0])
@@ -315,15 +332,20 @@ class DiffusionPolicyUNet(PolicyAlgo):
         action = self.action_queue.popleft()
         
         # [1,Da]
-        action = action.unsqueeze(0)
-        return action
+        action_dict = {} 
+        action_idx = 0
+        for k in self.action_shapes:
+            action_dict[k] = action[action_idx:action_idx+self.action_shapes[k][0]]
+            action_idx += self.action_shapes[k][0]
+        return action_dict
         
     def _get_action_trajectory(self, obs_dict, goal_dict=None):
         assert not self.nets.training
         To = self.algo_config.horizon.observation_horizon
         Ta = self.algo_config.horizon.action_horizon
         Tp = self.algo_config.horizon.prediction_horizon
-        action_dim = self.ac_dim
+        # action_dim = self.ac_dim
+        action_dim = self.nets['policy']['action_encoder'].output_shape()[0]
         if self.algo_config.ddpm.enabled is True:
             num_inference_timesteps = self.algo_config.ddpm.num_inference_timesteps
         elif self.algo_config.ddim.enabled is True:
@@ -344,6 +366,7 @@ class DiffusionPolicyUNet(PolicyAlgo):
         for k in self.obs_shapes:
             # first two dimensions should be [B, T] for inputs
             assert inputs['obs'][k].ndim - 2 == len(self.obs_shapes[k])
+
         obs_features = TensorUtils.time_distributed(inputs, self.nets['policy']['obs_encoder'], inputs_as_kwargs=True)
         assert obs_features.ndim == 3  # [B, T, D]
         B = obs_features.shape[0]

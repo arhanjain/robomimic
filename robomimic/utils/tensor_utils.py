@@ -956,5 +956,6 @@ def time_distributed(inputs, op, activation=None, inputs_as_kwargs=False, inputs
 
     if activation is not None:
         outputs = map_tensor(outputs, activation)
+
     outputs = reshape_dimensions(outputs, begin_axis=0, end_axis=0, target_dims=(batch_size, seq_len))
     return outputs

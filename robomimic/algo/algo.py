@@ -45,7 +45,8 @@ def algo_name_to_factory_func(algo_name):
     return REGISTERED_ALGO_FACTORY_FUNCS[algo_name]
 
 
-def algo_factory(algo_name, config, obs_key_shapes, ac_dim, device):
+# def algo_factory(algo_name, config, obs_key_shapes, ac_dim, device):
+def algo_factory(algo_name, config, obs_key_shapes, action_key_shapes, device):
     """
     Factory function for creating algorithms based on the algorithm name and config.
 
@@ -74,7 +75,8 @@ def algo_factory(algo_name, config, obs_key_shapes, ac_dim, device):
         obs_config=config.observation,
         global_config=config,
         obs_key_shapes=obs_key_shapes,
-        ac_dim=ac_dim,
+        # ac_dim=ac_dim,
+        action_key_shapes=action_key_shapes,
         device=device,
         **algo_kwargs
     )
@@ -93,7 +95,8 @@ class Algo(object):
         obs_config,
         global_config,
         obs_key_shapes,
-        ac_dim,
+        action_key_shapes,
+        # ac_dim,
         device
     ):
         """
@@ -117,7 +120,8 @@ class Algo(object):
         self.obs_config = obs_config
         self.global_config = global_config
 
-        self.ac_dim = ac_dim
+        # self.ac_dim = ac_dim
+        self.action_key_shapes = action_key_shapes
         self.device = device
         self.obs_key_shapes = obs_key_shapes
 
@@ -143,6 +147,8 @@ class Algo(object):
         self.goal_shapes = OrderedDict()
         self.subgoal_shapes = OrderedDict()
 
+        self.action_shapes = OrderedDict()
+
         # We check across all modality groups (obs, goal, subgoal), and see if the inputted observation key exists
         # across all modalitie specified in the config. If so, we store its corresponding shape internally
         for k in obs_key_shapes:
@@ -152,6 +158,9 @@ class Algo(object):
                 self.goal_shapes[k] = obs_key_shapes[k]
             if "subgoal" in self.obs_config.modalities and k in [obs_key for modality in self.obs_config.modalities.subgoal.values() for obs_key in modality]:
                 self.subgoal_shapes[k] = obs_key_shapes[k]
+
+        for k in self.action_key_shapes:
+            self.action_shapes[k] = self.action_key_shapes[k]
 
     def _create_networks(self):
         """
@@ -243,8 +252,8 @@ class Algo(object):
                             d[k] = ObsUtils.normalize_obs(d[k], obs_normalization_stats=obs_normalization_stats)
                 elif k == action_key:
                     # found key - stop search and process action
-                    # d[k] = ObsUtils.normalize_obs({k: d[k]}, obs_normalization_stats=action_normalization_stats)[k]
-                    d[k] = ObsUtils.normalize_action({k: d[k]}, action_normalization_stats=action_normalization_stats)[k]
+
+                    d[k] = ObsUtils.normalize_action(d[k], action_normalization_stats=action_normalization_stats)
                 elif isinstance(d[k], dict):
                     # search down into dictionary
                     recurse_helper(d[k])
@@ -526,10 +535,12 @@ class RolloutPolicy(object):
                 and np.array values for each key)
             goal (dict): goal observation
         """
+        ob = ObsUtils.process_obs_dict(ob)
         ob = self._prepare_observation(ob)
         if goal is not None:
             goal = self._prepare_observation(goal)
         ac = self.policy.get_action(obs_dict=ob, goal_dict=goal)
-        ac = ObsUtils.unnormalize_action({"actions": ac}, action_normalization_stats=self.action_normalization_stats)
-        return TensorUtils.to_numpy(ac[0])
+        ac = TensorUtils.to_numpy(ac)
+        ac = ObsUtils.unnormalize_action(ac, action_normalization_stats=self.action_normalization_stats)
+        return ac
 
