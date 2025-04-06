@@ -30,6 +30,7 @@ setup(
         "torch",
         "torchvision",
         "diffusers==0.11.1",
+        "huggingface_hub==0.25.2"
     ],
     eager_resources=['*'],
     include_package_data=True,
